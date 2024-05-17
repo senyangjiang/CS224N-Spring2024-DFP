@@ -77,15 +77,17 @@ class AdamW(Optimizer):
 
                 theta_t_1 = p.data.clone #theta at timestep t-1 (theta_t is at timestep t)
                 #while theta_t not converged do
-                while (not self.has_converged(p.data, theta_t_1, eps)):
-                    t = t + 1
-                    g_t = grad
-                    m_t = beta1 * m_0 + (1 - beta1) * g_t
-                    v_t = beta2 * v_0 + (1 - beta2) * g_t**2
-                    m_hat_t = m_t / (1 - beta1**t)
-                    v_hat_t = v_t / (1 - beta2**t)
-                    p.data = p.data - alpha * m_hat_t / (torch.sqrt(v_hat_t) + eps) - alpha * weight_decay * p.data #TODO better to do this or add weight decay to loss function?
-                
+                # while (not self.has_converged(p.data, theta_t_1, eps)):
+                t = t + 1
+                g_t = grad # TODO
+                m_t = beta1 * m_0 + (1 - beta1) * g_t
+                v_t = beta2 * v_0 + (1 - beta2) * g_t**2
+                # m_hat_t = m_t / (1 - beta1**t)
+                # v_hat_t = v_t / (1 - beta2**t)
+                # p.data = p.data - alpha * m_hat_t / (torch.sqrt(v_hat_t) + eps) - alpha * weight_decay * p.data #TODO better to do this or add weight decay to loss function?
+                alpha_t = alpha * math.sqrt(1 - beta2**t) / (1 - beta1**t)
+                p.data = p.data - alpha_t * m_t / (torch.sqrt(v_t) + eps) - alpha_t * weight_decay * p.data
+                # state[] #TODO store m_t, v_t, t in state
 
                 raise NotImplementedError
 

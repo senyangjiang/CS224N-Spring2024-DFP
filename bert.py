@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 import torch.nn.functional as F
 from base_bert import BertPreTrainedModel
 from utils import *
@@ -51,12 +52,12 @@ class BertSelfAttention(nn.Module):
 
     ### TODO
     key_T = torch.transpose(key, -1, -2)
-    attention_QK = (torch.matmul(query, key_T) / math.sqrt(self.attention_head_size), dim=-1) + attention_mask
-    norm_attention = F.softmax(attention_QK)
+    attention_QK = (torch.matmul(query, key_T) / math.sqrt(self.attention_head_size)) + attention_mask
+    norm_attention = F.softmax(attention_QK, dim=-1)
     weighted_value = torch.matmul(norm_attention, value)
 
     weighted_value = torch.permute(weighted_value, (0, 2, 1, 3))
-    weighted_value = weighted_value.view(norm_attention.size(0), norm_attention.size(-1), -1)
+    weighted_value = weighted_value.reshape(norm_attention.size(0), norm_attention.size(-1), -1)
 
     return weighted_value
 

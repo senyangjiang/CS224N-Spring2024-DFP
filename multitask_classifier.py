@@ -311,13 +311,20 @@ def train_multitask(args):
         # train_acc, train_f1, *_ = model_eval_sst(sst_train_dataloader, model, device)
         # dev_acc, dev_f1, *_ = model_eval_sst(sst_dev_dataloader, model, device)
         #TODO I ADDED THESE LINES:
-        train_acc, train_f1, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
-        dev_acc, dev_f1, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
+        sst_train_acc, sst_train_y_pred, sst_train_sent_ids, para_train_acc, para_train_y_pred, para_train_sent_ids, sts_train_corr, sts_train_y_pred, sts_train_sent_ids = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
+        sst_dev_acc, sst_dev_y_pred, sst_dev_sent_ids, para_dev_acc, para_dev_y_pred, para_dev_sent_ids, sts_dev_corr, sts_dev_y_pred, sts_dev_sent_ids = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
+        
+        #Normalize: STS is bw -1 and 1, others bw 0 and 1 --- add 1 to STS and divide by 2 to get bw 0 and 1
+        sts_train_acc = (sts_train_corr + 1) / 2
+        sts_dev_acc = (sts_dev_corr + 1) / 2
+        #make avg of all dev accuracies across all tasks
+        dev_acc = (sst_dev_acc + para_dev_acc + sts_dev_acc) / 3
+        train_acc = (sst_train_acc + para_train_acc + sts_train_acc) / 3
         #TODO END MY EDITS
 
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
-            save_model(model, optimizer, args, config, args.filepath)
+            save_model(model, optimizer, args, config, args.filepath) #for other separated (not avg) option, change filepath - diff model for each task
 
         print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
 

@@ -85,7 +85,8 @@ class AdamW(Optimizer):
                 # p.data = p.data - alpha * m_hat_t / (torch.sqrt(v_hat_t) + eps) - alpha * weight_decay * p.data #TODO better to do this or add weight decay to loss function?
                 
                 alpha_t = alpha * math.sqrt(1 - beta2**t) / (1 - beta1**t)
-                p.data = p.data - alpha_t * m_t / (torch.sqrt(v_t) + eps) - alpha * weight_decay * p.data
+                p.data -= alpha_t * m_t / (torch.sqrt(v_t) + eps) 
+                p.data -= alpha * weight_decay * p.data
                 
                 #Store m_t, v_t, t in state
                 state["m_t"] = m_t

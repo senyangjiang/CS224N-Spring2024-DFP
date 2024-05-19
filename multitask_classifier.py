@@ -81,8 +81,8 @@ class MultitaskBERT(nn.Module):
         #print("config.num_labels is:", config.num_labels)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob) # TODO these two lines dropout and proj are from classifier.py, so verify works
         self.proj_sentiment = torch.nn.Linear(config.hidden_size, self.num_labels) #linear layer for sentiment classification
-        self.proj_para_sim = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for paraphrase classification and for similarity classification
-        #self.proj_similarity = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for similarity classification
+        self.proj_paraphrase = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for paraphrase classification
+        self.proj_similarity = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for similarity classification
         # MY CODE ENDS HERE
         # raise NotImplementedError
 
@@ -128,7 +128,7 @@ class MultitaskBERT(nn.Module):
         out_pooler_2 = self.forward(input_ids_2, attention_mask_2)
         drop_out = self.dropout(torch.cat((out_pooler_1, out_pooler_2), dim=-1)) #TODO can mess with concatenation vs sum to test which works better
         # scores = F.softmax(self.proj(drop_out), dim=-1) #don't include this bc need unnormazlied logits
-        logit = self.proj_para_sim(drop_out)
+        logit = self.proj_paraphrase(drop_out)
         return logit
         # raise NotImplementedError
 
@@ -144,7 +144,7 @@ class MultitaskBERT(nn.Module):
         out_pooler_2 = self.forward(input_ids_2, attention_mask_2)
         drop_out = self.dropout(torch.cat([out_pooler_1, out_pooler_2], dim=-1))
         # scores = F.softmax(self.proj(drop_out), dim=-1) #don't include this bc need unnormazlied logits
-        logit = self.proj_para_sim(drop_out)
+        logit = self.proj_similarity(drop_out)
         return logit
         # raise NotImplementedError
 

@@ -19,7 +19,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-#from lightning.pytorch.utilities.combined_loader import CombinedLoader #TODO I added this
 from pytorch_lightning.utilities.combined_loader import CombinedLoader
 
 
@@ -84,7 +83,6 @@ class MultitaskBERT(nn.Module):
         self.proj_paraphrase = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for paraphrase classification
         self.proj_similarity = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for similarity classification
         # MY CODE ENDS HERE
-        # raise NotImplementedError
 
 
     def forward(self, input_ids, attention_mask):
@@ -98,7 +96,6 @@ class MultitaskBERT(nn.Module):
         out = self.bert(input_ids, attention_mask)
         out_pooler = out['pooler_output']
         return out_pooler
-        # raise NotImplementedError
 
 
     def predict_sentiment(self, input_ids, attention_mask):
@@ -113,7 +110,6 @@ class MultitaskBERT(nn.Module):
         drop_out = self.dropout(out_pooler)
         logits = self.proj_sentiment(drop_out)
         return logits
-        # raise NotImplementedError
 
 
     def predict_paraphrase(self,
@@ -130,7 +126,6 @@ class MultitaskBERT(nn.Module):
         # scores = F.softmax(self.proj(drop_out), dim=-1) #don't include this bc need unnormazlied logits
         logit = self.proj_paraphrase(drop_out)
         return logit
-        # raise NotImplementedError
 
 
     def predict_similarity(self,
@@ -146,7 +141,6 @@ class MultitaskBERT(nn.Module):
         # scores = F.softmax(self.proj(drop_out), dim=-1) #don't include this bc need unnormazlied logits
         logit = self.proj_similarity(drop_out)
         return logit
-        # raise NotImplementedError
 
 
 
@@ -214,12 +208,11 @@ def train_multitask(args):
 
     combined_train_dataloader = CombinedLoader({'sst': sst_train_dataloader, 
                                                 'para': para_train_dataloader, 
-                                                'sts': sts_train_dataloader})
+                                                'sts': sts_train_dataloader}, mode='sequential')
     # TODO might actually not use this if I only need to call the individual dev dataloaders later
     combined_dev_dataloader = CombinedLoader({'sst': sst_dev_dataloader,
                                                 'para': para_dev_dataloader,
-                                                'sts': sts_dev_dataloader})
-    
+                                                'sts': sts_dev_dataloader}, mode='sequential')
     #TODO MY EDITS END HERE
     
 
@@ -260,11 +253,12 @@ def train_multitask(args):
 
         # TODO MY EDITS BEGIN HERE
         
-        combined_train_dataloader_iter = iter(combined_train_dataloader)
-        for item, _, _ in tqdm(combined_train_dataloader_iter, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            for dataloader_name, batch in item.items():
+
+
+        _ = iter(combined_train_dataloader)
+        for batch, _, dataloader_idx in tqdm(combined_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
     
-                if dataloader_name == 'sst':
+                if dataloader_idx == 0: # sst
                     
                     b_ids, b_mask, b_labels = (batch['token_ids'],
                                            batch['attention_mask'], batch['labels'])
@@ -278,7 +272,7 @@ def train_multitask(args):
                     
                     loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
     
-                elif dataloader_name == 'para':
+                elif dataloader_idx == 1: # para
                     b_ids_1, b_mask_1, b_labels, b_ids_2, b_mask_2 = (batch['token_ids_1'],
                                            batch['attention_mask_1'], batch['labels'],
                                            batch['token_ids_2'],
@@ -298,7 +292,7 @@ def train_multitask(args):
                     #RuntimeError: Expected floating point type for target with class probabilities, got Long
                     loss = F.cross_entropy(logits.squeeze().float(), b_labels.float(), reduction='sum') / args.batch_size
                 
-                elif dataloader_name == 'sts':
+                elif dataloader_idx == 2: # sts
                     b_ids_1, b_mask_1, b_labels, b_ids_2, b_mask_2 = (batch['token_ids_1'],
                                            batch['attention_mask_1'], batch['labels'],
                                            batch['token_ids_2'],
@@ -314,9 +308,6 @@ def train_multitask(args):
                     logits = model.predict_similarity(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
                     
                     loss = F.cross_entropy(logits.squeeze().float(), b_labels.float(), reduction='sum') / args.batch_size
-    
-                else:
-                    raise ValueError(f"Unexpected dataloader name: {dataloader_name}")
                 
                 #TODO MY EDITS END HERE
                 #Edit: seems we need different lines in each task for calculating loss

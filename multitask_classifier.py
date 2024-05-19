@@ -19,12 +19,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-<<<<<<< HEAD
 #from lightning.pytorch.utilities.combined_loader import CombinedLoader #TODO I added this
 from pytorch_lightning.utilities.combined_loader import CombinedLoader
-=======
-from lightning.pytorch.utilities.combined_loader import CombinedLoader #TODO I added this
->>>>>>> 4a6ec01d14668c7154c1f1d5fb380514226f7509
 
 
 from bert import BertModel
@@ -81,20 +77,12 @@ class MultitaskBERT(nn.Module):
         # You will want to add layers here to perform the downstream tasks.
         ### TODO
         # MY CODE BEGINS HERE
-<<<<<<< HEAD
         self.num_labels = len(config.num_labels)
         #print("config.num_labels is:", config.num_labels)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob) # TODO these two lines dropout and proj are from classifier.py, so verify works
         self.proj_sentiment = torch.nn.Linear(config.hidden_size, self.num_labels) #linear layer for sentiment classification
         self.proj_para_sim = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for paraphrase classification and for similarity classification
         #self.proj_similarity = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for similarity classification
-=======
-        self.num_labels = config.num_labels
-        self.dropout = torch.nn.Dropout(config.hidden_dropout_prob) # TODO these two lines dropout and proj are from classifier.py, so verify works
-        self.proj_sentiment = torch.nn.Linear(config.hidden_size, self.num_labels) #linear layer for sentiment classification
-        self.proj_paraphrase = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for paraphrase classification
-        self.proj_similarity = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for similarity classification
->>>>>>> 4a6ec01d14668c7154c1f1d5fb380514226f7509
         # MY CODE ENDS HERE
         # raise NotImplementedError
 
@@ -124,10 +112,6 @@ class MultitaskBERT(nn.Module):
         out_pooler = self.forward(input_ids, attention_mask)
         drop_out = self.dropout(out_pooler)
         logits = self.proj_sentiment(drop_out)
-<<<<<<< HEAD
-=======
-        # scores = F.softmax(self.proj(drop_out), dim=-1) #don't include this bc need unnormazlied logits
->>>>>>> 4a6ec01d14668c7154c1f1d5fb380514226f7509
         return logits
         # raise NotImplementedError
 
@@ -142,11 +126,7 @@ class MultitaskBERT(nn.Module):
         ### TODO
         out_pooler_1 = self.forward(input_ids_1, attention_mask_1)
         out_pooler_2 = self.forward(input_ids_2, attention_mask_2)
-<<<<<<< HEAD
         drop_out = self.dropout(torch.cat((out_pooler_1, out_pooler_2), dim=-1)) #TODO can mess with concatenation vs sum to test which works better
-=======
-        drop_out = self.dropout(torch.cat([out_pooler_1, out_pooler_2], dim=-1)) #TODO can mess with concatenation vs sum to test which works better
->>>>>>> 4a6ec01d14668c7154c1f1d5fb380514226f7509
         # scores = F.softmax(self.proj(drop_out), dim=-1) #don't include this bc need unnormazlied logits
         logit = self.proj_para_sim(drop_out)
         return logit
@@ -265,7 +245,6 @@ def train_multitask(args):
         model.train()
         train_loss = 0
         num_batches = 0
-<<<<<<< HEAD
 
         #TODO this was the original, I removed
         # for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE): #or could randomly sample from each dataloader, for each batch
@@ -275,61 +254,6 @@ def train_multitask(args):
             # b_ids = b_ids.to(device)
             # b_mask = b_mask.to(device)
             # b_labels = b_labels.to(device)
-=======
-
-        #TODO this was the original, I removed
-        # for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE): #or could randomly sample from each dataloader, for each batch
-            # b_ids, b_mask, b_labels = (batch['token_ids'],
-            #                            batch['attention_mask'], batch['labels'])
-
-            # b_ids = b_ids.to(device)
-            # b_mask = b_mask.to(device)
-            # b_labels = b_labels.to(device)
-
-            # optimizer.zero_grad()
-            # logits = model.predict_sentiment(b_ids, b_mask)
-
-        # TODO MY EDITS BEGIN HERE
-            
-        for dataloader_name, batch in tqdm(combined_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-
-            if dataloader_name == 'sst':
-                
-                b_ids, b_mask, b_labels = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'])
-
-                b_ids = b_ids.to(device)
-                b_mask = b_mask.to(device)
-                b_labels = b_labels.to(device)
-
-                optimizer.zero_grad()
-                logits = model.predict_sentiment(b_ids, b_mask)
-
-            elif dataloader_name == 'para':
-                b_ids_1, b_mask_1, b_labels, b_ids_2, b_mask_2 = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'],
-                                       batch['token_ids2'],
-                                       batch['attention_mask2'])
-                
-                optimizer.zero_grad()
-                logits = model.predict_paraphrase(b_ids_1, b_mask_1, b_ids_2, b_mask_2) #TODO am I splitting this right?
-            
-            elif dataloader_name == 'sts':
-                b_ids_1, b_mask_1, b_labels, b_ids_2, b_mask_2 = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'],
-                                       batch['token_ids2'],
-                                       batch['attention_mask2'])
-                
-                optimizer.zero_grad()
-                logits = model.predict_similarity(b_ids, b_mask, b_ids, b_mask)
-
-            else:
-                raise ValueError(f"Unexpected dataloader name: {dataloader_name}")
-            
-            #TODO MY EDITS END HERE
-
-            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
->>>>>>> 4a6ec01d14668c7154c1f1d5fb380514226f7509
 
             # optimizer.zero_grad()
             # logits = model.predict_sentiment(b_ids, b_mask)
@@ -387,7 +311,7 @@ def train_multitask(args):
                     b_mask_2 = b_mask_2.to(device)
                     
                     optimizer.zero_grad()
-                    logits = model.predict_similarity(b_ids, b_mask, b_ids, b_mask)
+                    logits = model.predict_similarity(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
                     
                     loss = F.cross_entropy(logits.squeeze().float(), b_labels.float(), reduction='sum') / args.batch_size
     

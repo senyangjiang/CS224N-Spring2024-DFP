@@ -76,12 +76,16 @@ class MultitaskBERT(nn.Module):
         # You will want to add layers here to perform the downstream tasks.
         ### TODO
         # MY CODE BEGINS HERE
+        self.config = config
         self.num_labels = len(config.num_labels)
-        #print("config.num_labels is:", config.num_labels)
-        self.dropout = torch.nn.Dropout(config.hidden_dropout_prob) # TODO these two lines dropout and proj are from classifier.py, so verify works
-        self.proj_sentiment = torch.nn.Linear(config.hidden_size, self.num_labels) #linear layer for sentiment classification
-        self.proj_paraphrase = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for paraphrase classification
-        self.proj_similarity = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for similarity classification
+        self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+        if config.model == 'baseline':
+            self.proj_sentiment = torch.nn.Linear(config.hidden_size, self.num_labels) #linear layer for sentiment classification
+            self.proj_paraphrase = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for paraphrase classification
+            self.proj_similarity = torch.nn.Linear(config.hidden_size*2, 1) #linear layer for similarity classification
+        elif config.model == 'sbert':
+            self.proj_sentiment = torch.nn.Linear(config.hidden_size, self.num_labels)
+            self.proj_paraphrase = torch.nn.Linear(config.hidden_size*3, 2)
         # MY CODE ENDS HERE
 
 
@@ -92,10 +96,8 @@ class MultitaskBERT(nn.Module):
         # When thinking of improvements, you can later try modifying this
         # (e.g., by adding other layers).
         ### TODO
-        # TODO these lines are from classifier.py, so want to make sure those pass tests there
         out = self.bert(input_ids, attention_mask)
-        out_pooler = out['pooler_output']
-        return out_pooler
+        return out # {'last_hidden_state': sequence_output, 'pooler_output': first_tk}
 
 
     def predict_sentiment(self, input_ids, attention_mask):
@@ -105,8 +107,7 @@ class MultitaskBERT(nn.Module):
         Thus, your output should contain 5 logits for each sentence.
         '''
         ### TODO
-        # TODO these lines are from classifier.py, so want to make sure those pass tests there
-        out_pooler = self.forward(input_ids, attention_mask)
+        out_pooler = self.forward(input_ids, attention_mask)['pooler_output']
         drop_out = self.dropout(out_pooler)
         logits = self.proj_sentiment(drop_out)
         return logits
@@ -120,11 +121,16 @@ class MultitaskBERT(nn.Module):
         during evaluation.
         '''
         ### TODO
-        out_pooler_1 = self.forward(input_ids_1, attention_mask_1)
-        out_pooler_2 = self.forward(input_ids_2, attention_mask_2)
-        drop_out = self.dropout(torch.cat((out_pooler_1, out_pooler_2), dim=-1)) #TODO can mess with concatenation vs sum to test which works better
-        # scores = F.softmax(self.proj(drop_out), dim=-1) #don't include this bc need unnormazlied logits
-        logit = self.proj_paraphrase(drop_out)
+        if self.config.model == 'baseline':
+            out_pooler_1 = self.forward(input_ids_1, attention_mask_1)['pooler_output']
+            out_pooler_2 = self.forward(input_ids_2, attention_mask_2)['pooler_output']
+            drop_out = self.dropout(torch.cat((out_pooler_1, out_pooler_2), dim=-1))
+            logit = self.proj_paraphrase(drop_out)
+        elif self.config.model == 'sbert':
+            avg1 = torch.mean(self.forward(input_ids_1, attention_mask_1)['last_hidden_state'], dim=-2)
+            avg2 = torch.mean(self.forward(input_ids_2, attention_mask_2)['last_hidden_state'], dim=-2)
+            drop_out = self.dropout(torch.cat((avg1, avg2, torch.abs(avg1 - avg2)), dim=-1))
+            logit = self.proj_paraphrase(drop_out)
         return logit
 
 
@@ -135,11 +141,16 @@ class MultitaskBERT(nn.Module):
         Note that your output should be unnormalized (a logit).
         '''
         ### TODO
-        out_pooler_1 = self.forward(input_ids_1, attention_mask_1)
-        out_pooler_2 = self.forward(input_ids_2, attention_mask_2)
-        drop_out = self.dropout(torch.cat([out_pooler_1, out_pooler_2], dim=-1))
-        # scores = F.softmax(self.proj(drop_out), dim=-1) #don't include this bc need unnormazlied logits
-        logit = self.proj_similarity(drop_out)
+        if self.config.model == 'baseline':
+            out_pooler_1 = self.forward(input_ids_1, attention_mask_1)['pooler_output']
+            out_pooler_2 = self.forward(input_ids_2, attention_mask_2)['pooler_output']
+            drop_out = self.dropout(torch.cat([out_pooler_1, out_pooler_2], dim=-1))
+            logit = self.proj_similarity(drop_out)
+        elif self.config.model == 'sbert':
+            avg1 = torch.mean(self.forward(input_ids_1, attention_mask_1)['last_hidden_state'], dim=-2)
+            avg2 = torch.mean(self.forward(input_ids_2, attention_mask_2)['last_hidden_state'], dim=-2)
+            logit = F.cosine_similarity(avg1, avg2, dim=-1) # consine similarity is between -1 and 1
+            logit = torch.mul(torch.add(logit, 1), 2.5) # scale to between 0 and 5
         return logit
 
 
@@ -201,18 +212,18 @@ def train_multitask(args):
                                         collate_fn=sts_dev_data.collate_fn)
     
     #TODO combine into one dataloader
-    # train_dataloaders = [sst_train_dataloader, para_train_dataloader, sts_train_dataloader]
-    # dev_dataloaders = [sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader]
-    # combined_train_dataloader = CombinedLoader(train_dataloaders)
-    # combined_dev_dataloader = CombinedLoader(dev_dataloaders)
-
     combined_train_dataloader = CombinedLoader({'sst': sst_train_dataloader, 
                                                 'para': para_train_dataloader, 
                                                 'sts': sts_train_dataloader}, mode='sequential')
+    
+    # combined_train_dataloader = CombinedLoader({'sts': sts_train_dataloader,
+    #                                             'para': para_train_dataloader,                                                
+    #                                             'sst': sst_train_dataloader, 
+    #                                             }, mode='sequential')
     # TODO might actually not use this if I only need to call the individual dev dataloaders later
-    combined_dev_dataloader = CombinedLoader({'sst': sst_dev_dataloader,
-                                                'para': para_dev_dataloader,
-                                                'sts': sts_dev_dataloader}, mode='sequential')
+    # combined_dev_dataloader = CombinedLoader({'sst': sst_dev_dataloader,
+    #                                             'para': para_dev_dataloader,
+    #                                             'sts': sts_dev_dataloader}, mode='sequential')
     #TODO MY EDITS END HERE
     
 
@@ -222,7 +233,8 @@ def train_multitask(args):
               'num_labels': num_labels,
               'hidden_size': 768,
               'data_dir': '.',
-              'fine_tune_mode': args.fine_tune_mode}
+              'fine_tune_mode': args.fine_tune_mode,
+              'model': args.model}
 
     config = SimpleNamespace(**config)
 
@@ -239,22 +251,6 @@ def train_multitask(args):
         train_loss = 0
         num_batches = 0
 
-        #TODO this was the original, I removed
-        # for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE): #or could randomly sample from each dataloader, for each batch
-            # b_ids, b_mask, b_labels = (batch['token_ids'],
-            #                            batch['attention_mask'], batch['labels'])
-
-            # b_ids = b_ids.to(device)
-            # b_mask = b_mask.to(device)
-            # b_labels = b_labels.to(device)
-
-            # optimizer.zero_grad()
-            # logits = model.predict_sentiment(b_ids, b_mask)
-
-        # TODO MY EDITS BEGIN HERE
-        
-
-
         _ = iter(combined_train_dataloader)
         for batch, _, dataloader_idx in tqdm(combined_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
     
@@ -270,7 +266,7 @@ def train_multitask(args):
                     optimizer.zero_grad()
                     logits = model.predict_sentiment(b_ids, b_mask)
                     
-                    loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+                    loss = F.cross_entropy(logits, b_labels)
     
                 elif dataloader_idx == 1: # para
                     b_ids_1, b_mask_1, b_labels, b_ids_2, b_mask_2 = (batch['token_ids_1'],
@@ -285,12 +281,15 @@ def train_multitask(args):
                     b_mask_2 = b_mask_2.to(device)
                     
                     optimizer.zero_grad()
-                    logits = model.predict_paraphrase(b_ids_1, b_mask_1, b_ids_2, b_mask_2) #TODO am I splitting this right?
+                    logits = model.predict_paraphrase(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
                     
                     #print("para logits of shape:", logits.shape)   # (8, 1)
                     #print("para labels of shape:", b_labels.shape)    #(8,)
                     #RuntimeError: Expected floating point type for target with class probabilities, got Long
-                    loss = F.cross_entropy(logits.squeeze().float(), b_labels.float(), reduction='sum') / args.batch_size
+                    if args.model == 'baseline':
+                        loss = F.cross_entropy(logits.squeeze().float(), b_labels.float())
+                    elif args.model == 'sbert':
+                        loss = F.cross_entropy(logits, b_labels)
                 
                 elif dataloader_idx == 2: # sts
                     b_ids_1, b_mask_1, b_labels, b_ids_2, b_mask_2 = (batch['token_ids_1'],
@@ -307,7 +306,10 @@ def train_multitask(args):
                     optimizer.zero_grad()
                     logits = model.predict_similarity(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
                     
-                    loss = F.cross_entropy(logits.squeeze().float(), b_labels.float(), reduction='sum') / args.batch_size
+                    if args.model == 'baseline':
+                        loss = F.cross_entropy(logits.squeeze().float(), b_labels.float())
+                    elif args.model == 'sbert':
+                        loss = F.mse_loss(logits, b_labels.float())
                 
                 #TODO MY EDITS END HERE
                 #Edit: seems we need different lines in each task for calculating loss
@@ -321,28 +323,24 @@ def train_multitask(args):
 
         train_loss = train_loss / (num_batches)
 
-        #TODO TODO actually need to do this part
-        #TODO I REMOVED THESE LINES:
-        # train_acc, train_f1, *_ = model_eval_sst(sst_train_dataloader, model, device)
-        # dev_acc, dev_f1, *_ = model_eval_sst(sst_dev_dataloader, model, device)
         #TODO I ADDED THESE LINES:
-        sst_train_acc, sst_train_y_pred, sst_train_sent_ids, para_train_acc, para_train_y_pred, para_train_sent_ids, sts_train_corr, sts_train_y_pred, sts_train_sent_ids = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
-        sst_dev_acc, sst_dev_y_pred, sst_dev_sent_ids, para_dev_acc, para_dev_y_pred, para_dev_sent_ids, sts_dev_corr, sts_dev_y_pred, sts_dev_sent_ids = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
+        # sst_train_acc, sst_train_y_pred, sst_train_sent_ids, para_train_acc, para_train_y_pred, para_train_sent_ids, sts_train_corr, sts_train_y_pred, sts_train_sent_ids = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
+        sst_dev_acc, sst_dev_y_pred, sst_dev_sent_ids, para_dev_acc, para_dev_y_pred, para_dev_sent_ids, sts_dev_corr, sts_dev_y_pred, sts_dev_sent_ids = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device, args.model)
         
         #Normalize: STS is bw -1 and 1, others bw 0 and 1 --- add 1 to STS and divide by 2 to get bw 0 and 1
-        sts_train_acc = (sts_train_corr + 1) / 2
+        # sts_train_acc = (sts_train_corr + 1) / 2
         sts_dev_acc = (sts_dev_corr + 1) / 2
         #make avg of all dev accuracies across all tasks
         dev_acc = (sst_dev_acc + para_dev_acc + sts_dev_acc) / 3
-        train_acc = (sst_train_acc + para_train_acc + sts_train_acc) / 3
+        # train_acc = (sst_train_acc + para_train_acc + sts_train_acc) / 3
         #TODO END MY EDITS
 
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
             save_model(model, optimizer, args, config, args.filepath) #for other separated (not avg) option, change filepath - diff model for each task
 
-        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
-
+        # print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
+        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, dev acc :: {dev_acc :.3f}")
 
 def test_multitask(args):
     '''Test and save predictions on the dev and test sets of all three tasks.'''
@@ -390,13 +388,13 @@ def test_multitask(args):
             dev_paraphrase_accuracy, dev_para_y_pred, dev_para_sent_ids, \
             dev_sts_corr, dev_sts_y_pred, dev_sts_sent_ids = model_eval_multitask(sst_dev_dataloader,
                                                                     para_dev_dataloader,
-                                                                    sts_dev_dataloader, model, device)
+                                                                    sts_dev_dataloader, model, device, args.model)
 
         test_sst_y_pred, \
             test_sst_sent_ids, test_para_y_pred, test_para_sent_ids, test_sts_y_pred, test_sts_sent_ids = \
                 model_eval_test_multitask(sst_test_dataloader,
                                           para_test_dataloader,
-                                          sts_test_dataloader, model, device)
+                                          sts_test_dataloader, model, device, args.model)
 
         with open(args.sst_dev_out, "w+") as f:
             print(f"dev sentiment acc :: {dev_sentiment_accuracy :.3f}")
@@ -466,13 +464,17 @@ def get_args():
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.3)
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
 
+    parser.add_argument("--model", type=str,
+                        choices=('baseline', 'sbert'),
+                        default="baseline")
+
     args = parser.parse_args()
     return args
 
 
 if __name__ == "__main__":
     args = get_args()
-    args.filepath = f'{args.fine_tune_mode}-{args.epochs}-{args.lr}-multitask.pt' # Save path.
+    args.filepath = f'{args.model}-{args.fine_tune_mode}-{args.epochs}-{args.lr}-multitask.pt' # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
-    train_multitask(args)
+    # train_multitask(args)
     test_multitask(args)

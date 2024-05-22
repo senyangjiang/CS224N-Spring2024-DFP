@@ -476,5 +476,5 @@ if __name__ == "__main__":
     args = get_args()
     args.filepath = f'{args.model}-{args.fine_tune_mode}-{args.epochs}-{args.lr}-multitask.pt' # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
-    # train_multitask(args)
+    train_multitask(args)
     test_multitask(args)

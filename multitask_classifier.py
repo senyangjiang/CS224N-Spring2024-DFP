@@ -21,6 +21,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from pytorch_lightning.utilities.combined_loader import CombinedLoader
 
+from torch.utils.data import WeightedRandomSampler
+
 
 from bert import BertModel
 from optimizer import AdamW
@@ -250,6 +252,15 @@ def train_multitask(args):
         model.train()
         train_loss = 0
         num_batches = 0
+
+        # BATCH SAMPLING EXTENSION
+        alpha = 1 - 0.8 * ((epoch - 1) / (args.epochs - 1))
+        weights = [len(dataloader.dataset)**alpha for dataloader in combined_train_dataloader.loaders]
+        weights = [weight/sum(weights) for weight in weights]
+        print("Confirm - normalized if equals 1.0: ", sum(weights))
+        indices = [i for i, weight in enumerate(weights) for _ in range(int(weight * 1000))] #Create a list of indices for each dataset
+        sampler = WeightedRandomSampler(indices, len(indices))
+        combined_train_dataloader.sampler = sampler
 
         _ = iter(combined_train_dataloader)
         for batch, _, dataloader_idx in tqdm(combined_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):

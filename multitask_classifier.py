@@ -20,7 +20,6 @@ from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from pytorch_lightning.utilities.combined_loader import CombinedLoader
-
 from torch.utils.data import WeightedRandomSampler
 
 
@@ -213,15 +212,20 @@ def train_multitask(args):
     sts_dev_dataloader = DataLoader(sts_dev_data, shuffle=False, batch_size=args.batch_size,
                                         collate_fn=sts_dev_data.collate_fn)
     
+    original_dataloaders = [sst_train_dataloader, para_train_dataloader, sts_train_dataloader] #added this for tryna fix things w prop sampling
+
     #TODO combine into one dataloader
     combined_train_dataloader = CombinedLoader({'sst': sst_train_dataloader, 
                                                 'para': para_train_dataloader, 
                                                 'sts': sts_train_dataloader}, mode='sequential')
     
+
+
     # combined_train_dataloader = CombinedLoader({'sts': sts_train_dataloader,
     #                                             'para': para_train_dataloader,                                                
     #                                             'sst': sst_train_dataloader, 
     #                                             }, mode='sequential')
+    # print("First combined train dataloader: ", combined_train_dataloader)
     # TODO might actually not use this if I only need to call the individual dev dataloaders later
     # combined_dev_dataloader = CombinedLoader({'sst': sst_dev_dataloader,
     #                                             'para': para_dev_dataloader,
@@ -247,20 +251,83 @@ def train_multitask(args):
     optimizer = AdamW(model.parameters(), lr=lr)
     best_dev_acc = 0
 
+
+    # BATCH SAMPLING EXTENSION
+    # alpha = 1 - 0.8 * ((epoch - 1) / (args.epochs - 1))
+    alpha = 0.5
+    # print("Alpha: ", alpha)
+
+    weights = [len(dataloader.dataset)**alpha for dataloader in original_dataloaders]
+    # print("Weights computation 1: ", weights)
+    weights = [weight / sum(weights) for weight in weights]
+    # print("Weights computation 2: ", weights)
+
+
+    dataloaders = []
+    for dataloader, weight in zip(original_dataloaders, weights):
+        indices = [i for i in range(len(dataloader.dataset)) for _ in range(int(weight * 1000))]
+        # sampler = WeightedRandomSampler(indices, len(indices))
+        sampler = WeightedRandomSampler()
+        new_dataloader = DataLoader(dataloader.dataset, sampler=sampler)
+        dataloaders.append(new_dataloader)
+
+    
+    # print("Original dataloaders: ", original_dataloaders)
+    # print("Dataloaders: ", dataloaders)
+
+    # print("sst_train_dataloader dataset size: ", len(sst_train_dataloader.dataset))
+    # print("para_train_dataloader dataset size: ", len(para_train_dataloader.dataset))
+    # print("sts_train_dataloader dataset size: ", len(sts_train_dataloader.dataset))
+    # print("dataloaders[0] dataset size: ", len(dataloaders[0].dataset))
+    # print("dataloaders[1] dataset size: ", len(dataloaders[1].dataset))
+    # print("dataloaders[2] dataset size: ", len(dataloaders[2].dataset))
+
+    # combined_train_dataloader = CombinedLoader(dataloaders)
+    # combined_train_dataloader = CombinedLoader({'sst': sst_train_dataloader, 
+    #                                         'para': para_train_dataloader, 
+    #                                         'sts': sts_train_dataloader}, mode='sequential')
+    combined_train_dataloader = CombinedLoader({'sst': dataloaders[0], 
+                                            'para': dataloaders[1], 
+                                            'sts': dataloaders[2]}, mode='sequential')
+    # print("Second combined train dataloader: ", combined_train_dataloader)
+    # print("combined_train_dataloader.iterables: ", combined_train_dataloader.iterables)
+    
+
+
     # Run for the specified number of epochs.
     for epoch in range(args.epochs):
+    # for epoch in range(1, args.epochs + 1):
         model.train()
         train_loss = 0
         num_batches = 0
 
-        # BATCH SAMPLING EXTENSION
-        alpha = 1 - 0.8 * ((epoch - 1) / (args.epochs - 1))
-        weights = [len(dataloader.dataset)**alpha for dataloader in combined_train_dataloader.loaders]
-        weights = [weight/sum(weights) for weight in weights]
-        print("Confirm - normalized if equals 1.0: ", sum(weights))
-        indices = [i for i, weight in enumerate(weights) for _ in range(int(weight * 1000))] #Create a list of indices for each dataset
-        sampler = WeightedRandomSampler(indices, len(indices))
-        combined_train_dataloader.sampler = sampler
+        # # BATCH SAMPLING EXTENSION
+        # # alpha = 1 - 0.8 * ((epoch - 1) / (args.epochs - 1))
+        # alpha = 0.5
+        # print("Alpha: ", alpha)
+
+        # weights = [len(dataloader.dataset)**alpha for dataloader in original_dataloaders]
+        # # print("Weights computation 1: ", weights)
+        # weights = [weight / sum(weights) for weight in weights]
+        # # print("Weights computation 2: ", weights)
+    
+
+        # dataloaders = []
+        # for dataloader, weight in zip(original_dataloaders, weights):
+        #     indices = [i for i in range(len(dataloader.dataset)) for _ in range(int(weight * 1000))]
+        #     sampler = WeightedRandomSampler(indices, len(indices))
+        #     new_dataloader = DataLoader(dataloader.dataset, sampler=sampler)
+        #     dataloaders.append(new_dataloader)
+
+        # # combined_train_dataloader = CombinedLoader(dataloaders)
+        # # combined_train_dataloader = CombinedLoader({'sst': sst_train_dataloader, 
+        # #                                         'para': para_train_dataloader, 
+        # #                                         'sts': sts_train_dataloader}, mode='sequential')
+        # combined_train_dataloader = CombinedLoader({'sst': dataloaders[0], 
+        #                                         'para': dataloaders[1], 
+        #                                         'sts': dataloaders[2]}, mode='sequential')
+
+        ##    
 
         _ = iter(combined_train_dataloader)
         for batch, _, dataloader_idx in tqdm(combined_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
@@ -487,5 +554,5 @@ if __name__ == "__main__":
     args = get_args()
     args.filepath = f'{args.model}-{args.fine_tune_mode}-{args.epochs}-{args.lr}-multitask.pt' # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
-    # train_multitask(args)
+    train_multitask(args)
     test_multitask(args)

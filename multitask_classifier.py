@@ -22,6 +22,9 @@ from torch.utils.data import DataLoader
 from pytorch_lightning.utilities.combined_loader import CombinedLoader
 from torch.utils.data import WeightedRandomSampler
 
+# Imports for data collection and saving
+import time
+import os
 
 from bert import BertModel
 from optimizer import AdamW
@@ -193,7 +196,7 @@ def train_multitask(args):
     sst_dev_dataloader = DataLoader(sst_dev_data, shuffle=False, batch_size=args.batch_size,
                                     collate_fn=sst_dev_data.collate_fn)
     
-    #TODO MY EDITS BEGIN HERE
+    # EDITS BEGIN HERE
     #For paraphrase task:
     para_train_data = SentencePairDataset(para_train_data, args)
     para_dev_data = SentencePairDataset(para_dev_data, args)
@@ -214,26 +217,8 @@ def train_multitask(args):
     
     original_dataloaders = [sst_train_dataloader, para_train_dataloader, sts_train_dataloader] #added this for tryna fix things w prop sampling
 
-    #TODO combine into one dataloader
-    combined_train_dataloader = CombinedLoader({'sst': sst_train_dataloader, 
-                                                'para': para_train_dataloader, 
-                                                'sts': sts_train_dataloader}, mode='sequential')
+    # EDITS END HERE
     
-
-
-    # combined_train_dataloader = CombinedLoader({'sts': sts_train_dataloader,
-    #                                             'para': para_train_dataloader,                                                
-    #                                             'sst': sst_train_dataloader, 
-    #                                             }, mode='sequential')
-    # print("First combined train dataloader: ", combined_train_dataloader)
-    # TODO might actually not use this if I only need to call the individual dev dataloaders later
-    # combined_dev_dataloader = CombinedLoader({'sst': sst_dev_dataloader,
-    #                                             'para': para_dev_dataloader,
-    #                                             'sts': sts_dev_dataloader}, mode='sequential')
-    #TODO MY EDITS END HERE
-    
-
-
     # Init model.
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
               'num_labels': num_labels,
@@ -246,107 +231,105 @@ def train_multitask(args):
 
     model = MultitaskBERT(config)
     model = model.to(device)
+   
+    last_trained_epoch = -1 # Haven't trained any epochs yet
+    ### Load in checkpoint, if needed (if crashed partway through training)
+    # checkpoint_path = './model_saves/model_epoch_{epoch}.pth'
+    # checkpoint = torch.load(checkpoint_path) 
+    # last_trained_epoch = checkpoint['epoch'] 
+    # model_state_dict = checkpoint['model_state_dict']
+    # optimizer_state_dict = checkpoint['optimizer_state_dict']
+    # model.load_state_dict(model_state_dict) 
+    # optimizer.load_state_dict(optimizer_state_dict)
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
     best_dev_acc = 0
-
-
-    # BATCH SAMPLING EXTENSION
-    # alpha = 1 - 0.8 * ((epoch - 1) / (args.epochs - 1))
-    alpha = 0.5
-    # print("Alpha: ", alpha)
-
-    weights = [len(dataloader.dataset)**alpha for dataloader in original_dataloaders]
-    # print("Weights computation 1: ", weights)
-    weights = [weight / sum(weights) for weight in weights]
-    # print("Weights computation 2: ", weights)
-
-
-    dataloaders = []
-    for dataloader, weight in zip(original_dataloaders, weights):
-        indices = [i for i in range(len(dataloader.dataset)) for _ in range(int(weight * 1000))]
-        # sampler = WeightedRandomSampler(indices, len(indices))
-        sampler = WeightedRandomSampler()
-        new_dataloader = DataLoader(dataloader.dataset, sampler=sampler)
-        dataloaders.append(new_dataloader)
-
     
-    # print("Original dataloaders: ", original_dataloaders)
-    # print("Dataloaders: ", dataloaders)
-
-    # print("sst_train_dataloader dataset size: ", len(sst_train_dataloader.dataset))
-    # print("para_train_dataloader dataset size: ", len(para_train_dataloader.dataset))
-    # print("sts_train_dataloader dataset size: ", len(sts_train_dataloader.dataset))
-    # print("dataloaders[0] dataset size: ", len(dataloaders[0].dataset))
-    # print("dataloaders[1] dataset size: ", len(dataloaders[1].dataset))
-    # print("dataloaders[2] dataset size: ", len(dataloaders[2].dataset))
-
-    # combined_train_dataloader = CombinedLoader(dataloaders)
-    # combined_train_dataloader = CombinedLoader({'sst': sst_train_dataloader, 
-    #                                         'para': para_train_dataloader, 
-    #                                         'sts': sts_train_dataloader}, mode='sequential')
-    combined_train_dataloader = CombinedLoader({'sst': dataloaders[0], 
-                                            'para': dataloaders[1], 
-                                            'sts': dataloaders[2]}, mode='sequential')
-    # print("Second combined train dataloader: ", combined_train_dataloader)
-    # print("combined_train_dataloader.iterables: ", combined_train_dataloader.iterables)
-    
-
+    # FOR COLLECTING DATA
+    total_par_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"total number of parameters in PropSamp BERT: {total_par_num}")
+    print(model)
+    total_train_time = 0
 
     # Run for the specified number of epochs.
     for epoch in range(args.epochs):
-    # for epoch in range(1, args.epochs + 1):
+    # for epoch in range(last_trained_epoch + 1, args.epochs): # If crashed and want to continue training from where left off
+        
+        start_time = time.time()
+
         model.train()
         train_loss = 0
         num_batches = 0
 
-        # # BATCH SAMPLING EXTENSION
-        # # alpha = 1 - 0.8 * ((epoch - 1) / (args.epochs - 1))
-        # alpha = 0.5
+        print("Starting epoch: ", epoch)
+
+
+        # PROPORTIONAL BATCH SAMPLING EXTENSION
+        
+        # Calculate proportions of dataset sizes
+        alpha = 0.5 # NON-ANNEALED SAMPLING
+        # alpha = 1 - 0.8 * (epoch / (args.epochs - 1)) # ANNEALED SAMPLING
         # print("Alpha: ", alpha)
+        weights = [len(dataloader.dataset)**alpha for dataloader in original_dataloaders]
+        weights = [weight / sum(weights) for weight in weights]
+        print("Weights: ", weights)
 
-        # weights = [len(dataloader.dataset)**alpha for dataloader in original_dataloaders]
-        # # print("Weights computation 1: ", weights)
-        # weights = [weight / sum(weights) for weight in weights]
-        # # print("Weights computation 2: ", weights)
-    
+        # Set dataset index quantities to be its weight scaled up to be out of 50
+        dataset_idx_quantities = {}
+        for i in range(len(original_dataloaders)):
+            dataset_idx_quantities[i] = max(1, int(weights[i] * 50))
+        print("Dataset idx quantities: ", dataset_idx_quantities)
 
-        # dataloaders = []
-        # for dataloader, weight in zip(original_dataloaders, weights):
-        #     indices = [i for i in range(len(dataloader.dataset)) for _ in range(int(weight * 1000))]
-        #     sampler = WeightedRandomSampler(indices, len(indices))
-        #     new_dataloader = DataLoader(dataloader.dataset, sampler=sampler)
-        #     dataloaders.append(new_dataloader)
+        # Make the dataloaders iterable
+        dataloader_iters = [iter(dataloader) for dataloader in original_dataloaders]
 
-        # # combined_train_dataloader = CombinedLoader(dataloaders)
-        # # combined_train_dataloader = CombinedLoader({'sst': sst_train_dataloader, 
-        # #                                         'para': para_train_dataloader, 
-        # #                                         'sts': sts_train_dataloader}, mode='sequential')
-        # combined_train_dataloader = CombinedLoader({'sst': dataloaders[0], 
-        #                                         'para': dataloaders[1], 
-        #                                         'sts': dataloaders[2]}, mode='sequential')
+        epoch_size = sum(len(dl) for dl in original_dataloaders)
+        print("Epoch size: ", epoch_size)
 
-        ##    
+        print("Starting outer loop for epoch.")
+        while num_batches < epoch_size:
+            # print("Starting outer loop within epoch. Num batches: ", num_batches)
+            for i in range(dataset_idx_quantities[0]): # sst
+                # print("Starting inner loop for sst. Num batches: ", num_batches)
+                if (num_batches < epoch_size):
+                    dataset_idx = 0
+                    # Check if the iterator is exhausted, get next batch
+                    try:
+                        batch = next(dataloader_iters[dataset_idx])
+                    except StopIteration:
+                        dataloader_iters[dataset_idx] = iter(original_dataloaders[dataset_idx])
+                        batch = next(dataloader_iters[dataset_idx])
 
-        _ = iter(combined_train_dataloader)
-        for batch, _, dataloader_idx in tqdm(combined_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-    
-                if dataloader_idx == 0: # sst
-                    
                     b_ids, b_mask, b_labels = (batch['token_ids'],
-                                           batch['attention_mask'], batch['labels'])
-    
+                                            batch['attention_mask'], batch['labels'])
+        
                     b_ids = b_ids.to(device)
                     b_mask = b_mask.to(device)
                     b_labels = b_labels.to(device)
-    
+
                     optimizer.zero_grad()
                     logits = model.predict_sentiment(b_ids, b_mask)
                     
                     loss = F.cross_entropy(logits, b_labels)
-    
-                elif dataloader_idx == 1: # para
+
+                    loss.backward()
+                    optimizer.step()
+        
+                    train_loss += loss.item()
+                    num_batches += 1
+            for i in range(dataset_idx_quantities[1]): # para
+                # print("Starting inner loop for para. Num batches: ", num_batches)
+                if (num_batches < epoch_size):
+                    dataset_idx = 1
+
+                    # Check if the iterator is exhausted, get next batch
+                    try:
+                        batch = next(dataloader_iters[dataset_idx])
+                    except StopIteration:
+                        dataloader_iters[dataset_idx] = iter(original_dataloaders[dataset_idx])
+                        batch = next(dataloader_iters[dataset_idx])
+
                     b_ids_1, b_mask_1, b_labels, b_ids_2, b_mask_2 = (batch['token_ids_1'],
                                            batch['attention_mask_1'], batch['labels'],
                                            batch['token_ids_2'],
@@ -361,20 +344,34 @@ def train_multitask(args):
                     optimizer.zero_grad()
                     logits = model.predict_paraphrase(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
                     
-                    #print("para logits of shape:", logits.shape)   # (8, 1)
-                    #print("para labels of shape:", b_labels.shape)    #(8,)
-                    #RuntimeError: Expected floating point type for target with class probabilities, got Long
                     if args.model == 'baseline':
                         loss = F.cross_entropy(logits.squeeze().float(), b_labels.float())
                     elif args.model == 'sbert':
                         loss = F.cross_entropy(logits, b_labels)
-                
-                elif dataloader_idx == 2: # sts
+
+                    loss.backward()
+                    optimizer.step()
+        
+                    train_loss += loss.item()
+                    num_batches += 1
+            for i in range(dataset_idx_quantities[2]):
+                # print("Starting inner loop for sts. Num batches: ", num_batches)
+                if (num_batches < epoch_size):
+                    dataset_idx = 2
+
+                    # Check if the iterator is exhausted, get next batch
+                    try:
+                        batch = next(dataloader_iters[dataset_idx])
+                    except StopIteration:
+                        dataloader_iters[dataset_idx] = iter(original_dataloaders[dataset_idx])
+                        batch = next(dataloader_iters[dataset_idx])
+
+
                     b_ids_1, b_mask_1, b_labels, b_ids_2, b_mask_2 = (batch['token_ids_1'],
-                                           batch['attention_mask_1'], batch['labels'],
-                                           batch['token_ids_2'],
-                                           batch['attention_mask_2'])
-                    
+                                            batch['attention_mask_1'], batch['labels'],
+                                            batch['token_ids_2'],
+                                            batch['attention_mask_2'])
+                        
                     b_ids_1 = b_ids_1.to(device)
                     b_mask_1 = b_mask_1.to(device)
                     b_labels = b_labels.to(device)
@@ -388,37 +385,47 @@ def train_multitask(args):
                         loss = F.cross_entropy(logits.squeeze().float(), b_labels.float())
                     elif args.model == 'sbert':
                         loss = F.mse_loss(logits, b_labels.float())
-                
-                #TODO MY EDITS END HERE
-                #Edit: seems we need different lines in each task for calculating loss
-                #loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
-    
-                loss.backward()
-                optimizer.step()
-    
-                train_loss += loss.item()
-                num_batches += 1
+
+                    loss.backward()
+                    optimizer.step()
+        
+                    train_loss += loss.item()
+                    num_batches += 1
+        print("Finished retrieving all batches for epoch.")
+        # END PROPORTIONAL BATCH SAMPLING EXTENSION
 
         train_loss = train_loss / (num_batches)
 
-        #TODO I ADDED THESE LINES:
-        # sst_train_acc, sst_train_y_pred, sst_train_sent_ids, para_train_acc, para_train_y_pred, para_train_sent_ids, sts_train_corr, sts_train_y_pred, sts_train_sent_ids = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
+        # ADDED LINES IN BASELINE:
         sst_dev_acc, sst_dev_y_pred, sst_dev_sent_ids, para_dev_acc, para_dev_y_pred, para_dev_sent_ids, sts_dev_corr, sts_dev_y_pred, sts_dev_sent_ids = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device, args.model)
-        
         #Normalize: STS is bw -1 and 1, others bw 0 and 1 --- add 1 to STS and divide by 2 to get bw 0 and 1
-        # sts_train_acc = (sts_train_corr + 1) / 2
         sts_dev_acc = (sts_dev_corr + 1) / 2
         #make avg of all dev accuracies across all tasks
         dev_acc = (sst_dev_acc + para_dev_acc + sts_dev_acc) / 3
-        # train_acc = (sst_train_acc + para_train_acc + sts_train_acc) / 3
-        #TODO END MY EDITS
+        # END BASELINE EDITS
 
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
             save_model(model, optimizer, args, config, args.filepath) #for other separated (not avg) option, change filepath - diff model for each task
 
-        # print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
+        # COLLECT DATA
+        end_time = time.time()
+        train_time = end_time - start_time
+        total_train_time += train_time
+        print(f"Epoch {epoch}: total training time is {train_time}")
         print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, dev acc :: {dev_acc :.3f}")
+
+        #SAVE MODEL AFTER EACH EPOCH
+        dir_path = './model_saves'
+        os.makedirs(dir_path, exist_ok=True)
+        checkpoint = {"epoch": epoch, "model_state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(),}
+        torch.save(checkpoint, f'{dir_path}/model_epoch_{epoch}.pth')
+    
+    # COLLECT DATA
+    ave_train_time = total_train_time / args.epochs    
+    print(f"Total training time is: {total_train_time}!")
+    print(f"Finish Training! Average Training time is: {ave_train_time}!")
+
 
 def test_multitask(args):
     '''Test and save predictions on the dev and test sets of all three tasks.'''
@@ -554,5 +561,32 @@ if __name__ == "__main__":
     args = get_args()
     args.filepath = f'{args.model}-{args.fine_tune_mode}-{args.epochs}-{args.lr}-multitask.pt' # Save path.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
+    
+    ### Load the model if already trained model but didn't test
+    # print("Loading model from saved file")
+    # device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+    # sst_dev_data, num_labels,para_dev_data, sts_dev_data = load_multitask_data(args.sst_dev,args.para_dev,args.sts_dev, split ='train')
+    # config = {'hidden_dropout_prob': args.hidden_dropout_prob,
+    #           'num_labels': num_labels,
+    #           'hidden_size': 768,
+    #           'data_dir': '.',
+    #           'fine_tune_mode': args.fine_tune_mode,
+    #           'model': args.model}
+
+    # config = SimpleNamespace(**config)
+
+    # model = MultitaskBERT(config)
+    # model = model.to(device)
+
+    # # model.load_state_dict(torch.load(args.filepath)['model'])
+    # state_dict = torch.load(args.filepath, map_location=device)['model']
+    # model.load_state_dict(state_dict)
+
+    # lr = args.lr
+    # optimizer = AdamW(model.parameters(), lr=lr)
+    # optimizer.load_state_dict(torch.load(args.filepath)['optim'])
+    # print("Running test_multitask...")
+    ###
+    
     train_multitask(args)
     test_multitask(args)

@@ -1,102 +1,107 @@
-# read in csv files into DataFrames
+# Ensembles outputs from multiple models for each task (para, sst, sts)
+# and writes to a new csv file
 
 import pandas as pd
+from sklearn.utils import shuffle
 
 NUM_MODELS = 5
+SHUFFLED_DEV = False
 
-# read in csv files
-def read_csv_files():
-    # para dev
-    sbert_para = pd.read_csv('sep_model_outputs/sbert/para-dev-output.csv')
-    sbertAnnealData_para = pd.read_csv('sep_model_outputs/sbert-additional_data-anneal/para-dev-output.csv')
-    sbertAnneal_para = pd.read_csv('sep_model_outputs/sbert-anneal/para-dev-output.csv')
-    sbertSqrtData_para = pd.read_csv('sep_model_outputs/sbert-additional_data-sqrt/para-dev-output.csv')
-    sbertSqrt_para = pd.read_csv('sep_model_outputs/sbert-sqrt/para-dev-output.csv')
-    para_dev = [sbert_para, sbertAnnealData_para, sbertAnneal_para, sbertSqrtData_para, sbertSqrt_para]
-    para_dev_df = pd.read_csv(para_dev, sep='\t', header=None)
+# task is a string like 'para', 'sst', 'sts'
+# dicts is a list of dictionaries from the datasets for that task
+# firstline is a string for the headers for that task
+def ensemble(task, set, dicts, firstline):
 
-    # sst dev
-    sbert_sst = pd.read_csv('sep_model_outputs/sbert/sst-dev-output.csv')
-    sbertAnnealData_sst = pd.read_csv('sep_model_outputs/sbert-additional_data-anneal/sst-dev-output.csv')
-    sbertAnneal_sst = pd.read_csv('sep_model_outputs/sbert-anneal/sst-dev-output.csv')
-    sbertSqrtData_sst = pd.read_csv('sep_model_outputs/sbert-additional_data-sqrt/sst-dev-output.csv')
-    sbertSqrt_sst = pd.read_csv('sep_model_outputs/sbert-sqrt/sst-dev-output.csv')
-    sst_dev = [sbert_sst, sbertAnnealData_sst, sbertAnneal_sst, sbertSqrtData_sst, sbertSqrt_sst]
-    sst_dev_df = pd.read_csv(sst_dev, sep='\t', header=None)
+    new_dict = get_avg(task, dicts)
 
-    # sts dev
-    sbert_sts = pd.read_csv('sep_model_outputs/sbert/sts-dev-output.csv')
-    sbertAnnealData_sts = pd.read_csv('sep_model_outputs/sbert-additional_data-anneal/sts-dev-output.csv')
-    sbertAnneal_sts = pd.read_csv('sep_model_outputs/sbert-anneal/sts-dev-output.csv')
-    sbertSqrtData_sts = pd.read_csv('sep_model_outputs/sbert-additional_data-sqrt/sts-dev-output.csv')
-    sbertSqrt_sts = pd.read_csv('sep_model_outputs/sbert-sqrt/sts-dev-output.csv')
-    sts_dev = [sbert_sts, sbertAnnealData_sts, sbertAnneal_sts, sbertSqrtData_sts, sbertSqrt_sts]
-
-    print("Read in csv files")
-
-    return para_dev, sst_dev, sts_dev
-
-def ensemble(para_df, sst_df, sts_df):
-    print("Ensembling")
-
-    print("para_df[0] shape: ", para_df[0].shape)
-    print("sst_df[0] shape: ", sst_df[0].shape)
-    print("sts_df[0] shape: ", sts_df[0].shape)
+    print("Ensemble complete, writing to csv file")
+    newfilepath = f'sep_model_outputs/ensemble-{set}/{task}-{set}-output.csv'
+    print("Writing to ", newfilepath)
+    with open(newfilepath, 'w') as f:
+        f.write(firstline + '\n')
     
-    print("para_df[0] head: ", para_df[0].head())
-    print("sst_df[0] head: ", sst_df[0].head())
-    print("sts_df[0] head: ", sts_df[0].head())
+    df = pd.DataFrame(list(new_dict.items()))
+    df.to_csv(newfilepath, mode='a', index=False, header=False)
 
-    sbert_para_pred = para_df[0].iloc[:, 2]
-    sbertAnnealData_para_pred = para_df[1].iloc[:, 2]
-    sbertAnneal_para_pred = para_df[2].iloc[:, 2]
-    sbertSqrtData_para_pred = para_df[3].iloc[:, 2]
-    sbertSqrt_para_pred = para_df[4].iloc[:, 2]
+    print("Done writing to csv file for ", task)
 
-    sbert_sst_pred = sst_df[0].iloc[:, 2]
-    sbertAnnealData_sst_pred = sst_df[1].iloc[:, 2]
-    sbertAnneal_sst_pred = sst_df[2].iloc[:, 2]
-    sbertSqrtData_sst_pred = sst_df[3].iloc[:, 2]
-    sbertSqrt_sst_pred = sst_df[4].iloc[:, 2]
+def get_avg(task, dicts):
+    sbert_dict = dicts[0]
+    sbertAnnealData_dict = dicts[1]
+    sbertAnneal_dict = dicts[2]
+    sbertSqrtData_dict = dicts[3]
+    sbertSqrt_dict = dicts[4]
+    
+    new_dict = {}
+    for key in dicts[0]:
+        if (NUM_MODELS == 5):
+            new_dict[key] = (sbert_dict[key] + sbertAnnealData_dict[key] + sbertAnneal_dict[key] + sbertSqrtData_dict[key] + sbertSqrt_dict[key]) / NUM_MODELS
+        elif (NUM_MODELS == 3):
+            new_dict[key] = (sbertAnneal_dict[key] + sbertAnnealData_dict[key] + sbertSqrtData_dict[key]) / NUM_MODELS
+        
+        if task == 'para' or task == 'sst':
+            new_dict[key] = round(new_dict[key])
 
-    sbert_sts_pred = sts_df[0].iloc[:, 2]
-    sbertAnnealData_sts_pred = sts_df[1].iloc[:, 2]
-    sbertAnneal_sts_pred = sts_df[2].iloc[:, 2]
-    sbertSqrtData_sts_pred = sts_df[3].iloc[:, 2]
-    sbertSqrt_sts_pred = sts_df[4].iloc[:, 2]
+    return new_dict
 
-    # ensemble
-    para_pred = (sbert_para_pred + sbertAnnealData_para_pred + sbertAnneal_para_pred + sbertSqrtData_para_pred + sbertSqrt_para_pred) / NUM_MODELS
-    para_pred = para_pred.round()
+def read_csv_files(set):
+    para_dicts, para_firstline = read_csv('para', set)
+    sst_dicts, sst_firstline = read_csv('sst', set)
+    sts_dicts, sts_firstline = read_csv('sts', set)
 
-    sst_pred = (sbert_sst_pred + sbertAnnealData_sst_pred + sbertAnneal_sst_pred + sbertSqrtData_sst_pred + sbertSqrt_sst_pred) / NUM_MODELS
-    sst_pred = sst_pred.round()
+    firstlines = [para_firstline, sst_firstline, sts_firstline]
+    return para_dicts, sst_dicts, sts_dicts, firstlines
 
-    sts_pred = (sbert_sts_pred + sbertAnnealData_sts_pred + sbertAnneal_sts_pred + sbertSqrtData_sts_pred + sbertSqrt_sts_pred) / NUM_MODELS
+def read_csv(task, set):
+    if not SHUFFLED_DEV:
+        sbert_filepath = f'sep_model_outputs/sbert/{task}-{set}-output.csv'
+        sbertAnnealData_filepath = f'sep_model_outputs/sbert-additional_data-anneal/{task}-{set}-output.csv'
+        sbertAnneal_filepath = f'sep_model_outputs/sbert-anneal/{task}-{set}-output.csv' # best performing
+        sbertSqrtData_filepath = f'sep_model_outputs/sbert-additional_data-sqrt/{task}-{set}-output.csv'
+        sbertSqrt_filepath = f'sep_model_outputs/sbert-sqrt/{task}-{set}-output.csv'
+        print("sbert_filepath: ", sbert_filepath)
+        print("sbertAnnealData_filepath: ", sbertAnnealData_filepath)
+        print("sbertAnneal_filepath: ", sbertAnneal_filepath)
+        print("sbertSqrtData_filepath: ", sbertSqrtData_filepath)
+        print("sbertSqrt_filepath: ", sbertSqrt_filepath)
+    elif SHUFFLED_DEV:
+        sbert_filepath = f'sep_model_outputs/shuffled/sbert/{task}-{set}-output.csv'
+        sbertAnnealData_filepath = f'sep_model_outputs/shuffled/sbert-additional_data-anneal/{task}-{set}-output.csv'
+        sbertAnneal_filepath = f'sep_model_outputs/shuffled/sbert-anneal/{task}-{set}-output.csv' # best performing
+        sbertSqrtData_filepath = f'sep_model_outputs/shuffled/sbert-additional_data-sqrt/{task}-{set}-output.csv'
+        sbertSqrt_filepath = f'sep_model_outputs/shuffled/sbert-sqrt/{task}-{set}-output.csv'
 
-    # write to new csv, keeping first two columns, third column is ensembled predictions
-    new_para = para_df[0].iloc[:, :2]
-    new_para.insert(2, '', para_pred)
+    with open(sbertAnneal_filepath, 'r') as f:
+        firstline = f.readline().strip()
+    print("firstline: ", firstline)
 
-    new_sst = sst_df[0].iloc[:, :2]
-    new_sst.insert(2, '', sst_pred)
+    sbert = pd.read_csv(sbert_filepath, sep='\t', nrows=0).columns
+    sbert = pd.read_csv(sbert_filepath, names=sbert, skiprows=1)
 
-    new_sts = sts_df[0].iloc[:, :2]
-    new_sts.insert(2, '', sts_pred)
+    sbertAnnealData = pd.read_csv(sbertAnnealData_filepath, sep='\t', nrows=0).columns
+    sbertAnnealData = pd.read_csv(sbertAnnealData_filepath, names=sbertAnnealData, skiprows=1)
 
-    print("Ensemble complete, writing to csv files")
-    new_para.to_csv('sep_model_outputs/ensemble-dev/para-dev-output.csv', index=False)
-    new_sst.to_csv('sep_model_outputs/ensemble-dev/sst-dev-output.csv', index=False)
-    new_sts.to_csv('sep_model_outputs/ensemble-dev/sts-dev-output.csv', index=False)
-    print("Done writing to csv files")
+    sbertAnneal = pd.read_csv(sbertAnneal_filepath, sep='\t', nrows=0).columns
+    sbertAnneal = pd.read_csv(sbertAnneal_filepath, names=sbertAnneal, skiprows=1)
 
-
+    sbertSqrtData = pd.read_csv(sbertSqrtData_filepath, sep='\t', nrows=0).columns
+    sbertSqrtData = pd.read_csv(sbertSqrtData_filepath, names=sbertSqrtData, skiprows=1)
+    
+    sbertSqrt = pd.read_csv(sbertSqrt_filepath, sep='\t', nrows=0).columns
+    sbertSqrt = pd.read_csv(sbertSqrt_filepath, names=sbertSqrt, skiprows=1)
+    
+    dfs = [sbert, sbertAnnealData, sbertAnneal, sbertSqrtData, sbertSqrt]
+    dicts = [df.set_index(df.columns[0]).iloc[:, 0].to_dict() for df in dfs]
+    return dicts, firstline
 
 
 # main to run this file
 def main():
-    para_dev, sst_dev, sts_dev = read_csv_files()
-    ensemble(para_dev, sst_dev, sts_dev)
+    set = 'test'
+    para_dicts, sst_dicts, sts_dicts, firstlines = read_csv_files(set)
+    ensemble('para', set, para_dicts, firstlines[0])
+    ensemble('sst', set, sst_dicts, firstlines[1])
+    ensemble('sts', set, sts_dicts, firstlines[2])
 
 if __name__ == "__main__":
     main()
